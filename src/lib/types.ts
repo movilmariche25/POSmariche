@@ -1,0 +1,299 @@
+import type { Timestamp } from "firebase/firestore";
+
+export type ComboItem = {
+  productId: string;
+  productName: string;
+  quantity: number;
+}
+
+export type ProductUnit = 'unit' | 'kg' | 'g' | 'lb' | 'liter';
+
+export type Product = {
+  id?: string;
+  name: string;
+  category: string;
+  sku: string;
+  barcode?: string;
+  costPrice: number;
+  promoPrice?: number;
+  stockLevel: number;
+  reservedStock: number;
+  damagedStock: number;
+  lowStockThreshold: number;
+  compatibleModels?: string[];
+  isCombo?: boolean;
+  comboItems?: ComboItem[];
+  isGiftable?: boolean;
+  isFixedPrice?: boolean;
+  fixedPrice?: number;
+  hasCustomMargin?: boolean;
+  customMargin?: number;
+  hasIVA?: boolean;
+  unit: ProductUnit;
+  createdAt?: string;
+};
+
+export type ReservedPart = {
+  productId: string;
+  productName: string;
+  quantity: number;
+  costPrice: number;
+  isPromo?: boolean;
+  isWarranty?: boolean;
+  isManual?: boolean;
+}
+
+export type RepairStatus = 'Pendiente' | 'Pagado' | 'Completado' | 'Garantía';
+
+export type RepairJob = {
+  id?: string;
+  customerName: string;
+  customerPhone: string;
+  customerID?: string;
+  customerAddress?: string;
+  deviceMake: string;
+  deviceModel: string;
+  reportedIssue: string;
+  initialConditionsChecklist?: string[];
+  partsCost: number;
+  laborCost: number;
+  estimatedCost: number;
+  amountPaid: number;
+  isPaid: boolean;
+  status: RepairStatus;
+  notes?: string;
+  createdAt: string;
+  reservedParts?: ReservedPart[];
+  consumedParts?: ReservedPart[]; 
+  completedAt?: string;
+  warrantyEndDate?: string;
+  partsConsumed?: boolean; 
+  isPromo?: boolean;
+};
+
+export type FiadoStatus = 'Pendiente' | 'Pagado';
+
+export type FiadoItem = {
+  productId: string;
+  productName: string;
+  quantity: number;
+  price: number;
+  costPrice: number;
+  isPromo?: boolean;
+};
+
+export type Fiado = {
+  id?: string;
+  customerName: string;
+  customerID: string;
+  customerPhone: string;
+  concept: string;
+  totalAmount: number;
+  amountPaid: number;
+  totalCost: number;
+  status: FiadoStatus;
+  createdAt: string;
+  dueDate?: string;
+  notes?: string;
+  items?: FiadoItem[];
+  isPromo?: boolean;
+};
+
+export type Worker = {
+  id?: string;
+  name: string;
+  phone?: string;
+  active: boolean;
+  createdAt: string;
+};
+
+export type PayrollPayment = {
+  id?: string;
+  workerId?: string;
+  workerName: string;
+  amountUSD: number;
+  amountBs: number;
+  methodUSD: PaymentMethod;
+  methodBs: PaymentMethod;
+  dateFrom: string;
+  dateTo: string;
+  createdAt: string;
+  notes?: string;
+  loanId?: string;
+  loanDeduction?: number;
+};
+
+export type LoanStatus = 'active' | 'paid';
+
+export type Loan = {
+  id?: string;
+  partnerName: string;
+  totalAmount: number;
+  remainingAmount: number;
+  currency: Currency;
+  sourceMethod: PaymentMethod;
+  hasWeeklyDeduction: boolean;
+  weeklyDeduction: number;
+  status: LoanStatus;
+  createdAt: string;
+  notes?: string;
+};
+
+export type CurrencyExchange = {
+  id?: string;
+  bsAmount: number;
+  usdAmount: number;
+  rate: number;
+  sourceMethod: PaymentMethod;
+  notes?: string;
+  createdAt: string;
+};
+
+export type BsTransfer = {
+  id?: string;
+  amountSent: number;
+  amountReceived: number;
+  sourceMethod: PaymentMethod;
+  targetMethod: PaymentMethod;
+  notes?: string;
+  createdAt: string;
+};
+
+export type ExpenseCategory = 'Mercancía' | 'Servicios' | 'Alquiler' | 'Retiro Personal' | 'Otros';
+
+export type Expense = {
+  id?: string;
+  description: string;
+  category: ExpenseCategory;
+  amountUSD: number;
+  amountBs: number;
+  methodUSD: PaymentMethod;
+  methodBs: PaymentMethod;
+  createdAt: string;
+};
+
+export type UserModule = 'inventory' | 'pos' | 'repairs' | 'reports' | 'analysis' | 'fiados' | 'inventory_aging' | 'payroll' | 'treasury' | 'loans' | 'exchange';
+
+export type CartItem = {
+  productId: string;
+  quantity: number;
+  name: string;
+  isRepair?: boolean;
+  isPromo?: boolean;
+  isGift?: boolean;
+  isWarranty?: boolean;
+  isCustom?: boolean;
+  customPrice?: number;
+  customCostPrice?: number;
+};
+
+export type HeldSale = {
+  id: string;
+  name: string;
+  createdAt: string;
+  items: CartItem[];
+};
+
+export type PaymentMethod = 'Efectivo USD' | 'Efectivo Bs' | 'Tarjeta' | 'Pago Móvil' | 'Transferencia' | 'Tarjeta / Pago Móvil';
+
+export type Payment = {
+  method: PaymentMethod;
+  amount: number;
+  reference?: string;
+}
+
+export type Sale = {
+  id?: string;
+  items: (CartItem & { price: number })[];
+  repairJobId?: string;
+  fiadoId?: string;
+  consumedParts?: ReservedPart[];
+  subtotal: number;
+  discount: number;
+  totalAmount: number;
+  paymentMethod: string;
+  transactionDate: string;
+  payments: Payment[];
+  status: 'completed' | 'refunded';
+  refundedAt?: string;
+  refundReason?: string;
+  refundPaymentMethod?: PaymentMethod;
+  reconciliationId?: string;
+  totalChangeInUSD?: number;
+  changeGiven?: Payment[];
+  actualPaidAmount?: number;
+  bcvRateAtTime?: number;
+  parallelRateAtTime?: number;
+};
+
+export type ReconciliationPaymentMethodSummary = {
+  expected: number;
+  counted: number;
+  difference: number;
+};
+
+export type DailyReconciliation = {
+  id: string;
+  date: string;
+  totalSales: number;
+  totalTransactions: number;
+  closedAt: string;
+  paymentMethods: {
+    [key in PaymentMethod]?: ReconciliationPaymentMethodSummary;
+  };
+  totalExpected: number;
+  totalCounted: number;
+  totalDifference: number;
+  totalPaymentsReceived?: number;
+  totalChangeGiven?: number;
+  notes?: string;
+};
+
+export type Currency = 'USD' | 'Bs';
+
+export type AppSettings = {
+    currency: Currency;
+    bcvRate: number;
+    parallelRate: number;
+    profitMargin: number;
+    autoUpdateBcv?: boolean;
+    lastUpdated?: string;
+    balancesUpdatedAt?: string;
+    weeklyRent?: number;
+    investmentPercentage?: number;
+    partnersCount?: number;
+    initialBalances?: {
+        'Efectivo USD'?: number;
+        'Efectivo Bs'?: number;
+        'Tarjeta'?: number;
+        'Pago Móvil'?: number;
+        'Transferencia'?: number;
+        'Tarjeta / Pago Móvil'?: number;
+    };
+};
+
+export type UserProfile = {
+  id?: string;
+  uid: string;
+  email: string;
+  businessName?: string;
+  businessAddress?: string;
+  businessRIF?: string;
+  showInfoOnReceipt?: boolean;
+  showRateOnReceipt?: boolean;
+  showTermsOnReceipt?: boolean;
+  printLeftMargin?: number;
+  licenseStatus: 'active' | 'expired' | 'trial';
+  licenseExpiry: string;
+  createdAt: string;
+  isAdmin?: boolean;
+  lastSessionId?: string;
+  updatedAt?: string;
+  enabledModules?: UserModule[];
+  securityPin?: string;
+  isPinRequired?: boolean;
+  lockedModules?: UserModule[];
+  repairWarrantyPolicy?: string;
+  repairPickupPolicy?: string;
+  repairDisclaimer?: string;
+};
