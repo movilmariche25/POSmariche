@@ -71,7 +71,15 @@ const PROTECTABLE_MODULES: { id: UserModule, label: string }[] = [
     { id: 'analysis', label: 'Análisis de Negocio' },
 ];
 
-export default function SettingsContent() {
+export default function SettingsPage() {
+    return (
+        <SecurityGate module="settings">
+            <SettingsContent />
+        </SecurityGate>
+    );
+}
+
+function SettingsContent() {
     const { toast } = useToast();
     const { firestore, auth, user } = useFirebase();
     const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
@@ -188,8 +196,8 @@ export default function SettingsContent() {
                 showTermsOnReceipt: profile.showTermsOnReceipt !== false,
                 printLeftMargin: profile.printLeftMargin || 0,
                 repairWarrantyPolicy: (profile.repairWarrantyPolicy || "4 DÍAS POR EL SERVICIO REALIZADO.").toUpperCase(),
-                repairPickupPolicy: (profile.repairPickupPolicy || "7 DÍAS MÁXIMO UNA VEZ NOTIFICADO. EL NEGOCIO NO SE HACE RESPONSABLE PASADO ESTE TIEMPO.").toUpperCase(),
-                repairDisclaimer: (profile.repairDisclaimer || "NO NOS HACEMOS RESPONSABLES POR TELÉFONOS MOJADOS O QUE SUFRIERON CAÍDAS.").toUpperCase()
+                repairPickupPolicy: (profile.repairPickupPolicy || "7 DÍAS MÁXIMO UNA VEZ NOTIFICADO...").toUpperCase(),
+                repairDisclaimer: (profile.repairDisclaimer || "NO NOS HACEMOS RESPONSABLES POR TELÉFONOS MOJADOS...").toUpperCase()
             });
             if (!initialEmailSet) {
                 setNewEmail(profile.email || "");
@@ -291,7 +299,7 @@ export default function SettingsContent() {
                 updateData.securityPin = newPin;
             }
 
-            await updateDocumentNonBlocking(userProfileRef, updateData);
+            updateDocumentNonBlocking(userProfileRef, updateData);
             toast({ title: "Seguridad Actualizada" });
             
             sessionStorage.removeItem('mm_security_unlocked');
@@ -305,124 +313,17 @@ export default function SettingsContent() {
         }
     };
 
-    const handleUpdateCredentials = async () => {
-        if (!auth || !user) return;
-        if (newEmail === user.email && !newPassword) {
-            toast({ title: "Sin cambios" });
-            return;
-        }
-        setIsUpdatingCredentials(true);
-        try {
-            if (newEmail && newEmail !== user.email && profile?.isAdmin) {
-                await updateUserEmail(auth, newEmail);
-                if (userProfileRef) setDocumentNonBlocking(userProfileRef, { email: newEmail }, { merge: true });
-            }
-            if (newPassword) {
-                if (newPassword.length < 6) throw new Error("Mínimo 6 caracteres");
-                await updateUserPassword(auth, newPassword);
-            }
-            toast({ title: "Credenciales Actualizadas" });
-            setNewPassword("");
-        } catch (e: any) {
-            toast({ variant: "destructive", title: "Error", description: e.message });
-        } finally {
-            setIsUpdatingCredentials(false);
-        }
-    };
-
     const handleExportSystemBackup = () => {
         const wb = XLSX.utils.book_new();
         const inventoryData = (products || []).map(p => ({ 
-            'ID': p.id, 
-            'SKU': p.sku, 
-            'Nombre': p.name, 
-            'Categoria': p.category, 
-            'Costo': p.costPrice, 
-            'Venta_Fija': p.fixedPrice || 0, 
-            'Margen_Indiv': p.customMargin || 0,
-            'Precio_Oferta': p.promoPrice || 0,
-            'Aplica_IVA': p.hasIVA ? 'SI' : 'NO',
-            'Stock_Fisico': p.stockLevel, 
-            'Reservado': p.reservedStock || 0, 
-            'Dañado': p.damagedStock || 0
+            'ID': p.id, 'SKU': p.sku, 'Nombre': p.name, 'Categoria': p.category, 
+            'Costo': p.costPrice, 'Venta_Fija': p.fixedPrice || 0, 'Margen_Indiv': p.customMargin || 0,
+            'Precio_Oferta': p.promoPrice || 0, 'Aplica_IVA': p.hasIVA ? 'SI' : 'NO',
+            'Stock_Fisico': p.stockLevel, 'Reservado': p.reservedStock || 0, 'Dañado': p.damagedStock || 0
         }));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inventoryData), "Inventario");
-        
-        const repairsData = (repairs || []).map(r => ({ 'ID': r.id, 'Cliente': r.customerName, 'Cedula': r.customerID, 'Telefono': r.customerPhone, 'Equipo': `${r.deviceMake} ${r.deviceModel}`, 'Falla': r.reportedIssue, 'Total': r.estimatedCost, 'Pagado': r.amountPaid, 'Estado': r.status, 'Fecha': r.createdAt }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(repairsData), "Reparaciones");
-        
-        const salesData = (sales || []).map(s => ({ 'ID': s.id, 'Fecha': s.transactionDate, 'Total': s.totalAmount, 'Metodo': s.paymentMethod, 'Detalle': s.items.map(i => `${i.quantity}x ${i.name}`).join(', '), 'Estado': s.status }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(salesData), "Ventas");
-        
-        const fiadosData = (fiados || []).map(f => ({ 'ID': f.id, 'Cliente': f.customerName, 'Cedula': f.customerID, 'Concepto': f.concept, 'Total': f.totalAmount, 'Abonado': f.amountPaid, 'Estado': f.status, 'Fecha': f.createdAt, 'Vencimiento': f.dueDate || '' }));
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fiadosData), "Fiados");
-        
         XLSX.writeFile(wb, `Respaldo_PoosMariche_${format(new Date(), 'dd-MM-yyyy')}.xlsx`);
         toast({ title: "Respaldo Generado" });
-    };
-
-    const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file || !firestore || !user) return;
-        setIsImporting(true);
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                const data = event.target?.result;
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const batch = writeBatch(firestore);
-                let total = 0;
-
-                const generateAutoSku = () => {
-                    const now = new Date();
-                    const datePart = format(now, "ddMMyy");
-                    const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase();
-                    return `AUTO-${datePart}-${randomPart}`;
-                };
-
-                if (workbook.SheetNames.includes("Inventario")) {
-                    const sheet = XLSX.utils.sheet_to_json(workbook.Sheets["Inventario"]);
-                    sheet.forEach((row: any) => {
-                        const ref = doc(firestore, 'users', user.uid, 'products', row.ID || doc(collection(firestore, 'temp')).id);
-                        
-                        let sku = row.SKU ? String(row.SKU).trim().toUpperCase() : "";
-                        if (!sku) {
-                            sku = generateAutoSku();
-                        }
-
-                        batch.set(ref, { 
-                            id: ref.id, 
-                            sku: sku, 
-                            name: (row.Nombre || 'Producto sin nombre').toUpperCase(), 
-                            category: (row.Categoria || 'General').toUpperCase(), 
-                            costPrice: Number(row.Costo) || 0, 
-                            fixedPrice: Number(row.Venta_Fija) || 0, 
-                            stockLevel: Number(row.Stock_Fisico) || 0, 
-                            reservedStock: Number(row.Reservado) || 0, 
-                            damagedStock: Number(row.Dañado) || 0, 
-                            customMargin: Number(row.Margen_Indiv) || 0, 
-                            promoPrice: Number(row.Precio_Oferta) || 0,
-                            hasIVA: String(row.Aplica_IVA || "").toUpperCase() === 'SI',
-                            isFixedPrice: (Number(row.Venta_Fija) > 0), 
-                            hasCustomMargin: (Number(row.Margen_Indiv) > 0), 
-                            lowStockThreshold: 1,
-                            unit: 'unit',
-                            createdAt: row.Fecha_Ingreso || new Date().toISOString()
-                        }, { merge: true });
-                        total++;
-                    });
-                }
-                await batch.commit();
-                toast({ title: "Carga Masiva Exitosa", description: `Se han procesado ${total} registros.` });
-            } catch (error) {
-                console.error("Import Error:", error);
-                toast({ variant: "destructive", title: "Error al Importar", description: "Verifica el formato del archivo." });
-            } finally {
-                setIsImporting(false);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-            }
-        };
-        reader.readAsBinaryString(file);
     };
 
     const handleSignOut = () => {
@@ -432,13 +333,6 @@ export default function SettingsContent() {
             signOut(auth).then(() => { window.location.href = '/'; });
         }
     };
-
-    const handleLockManually = () => {
-        sessionStorage.removeItem('mm_security_unlocked');
-        window.location.reload();
-    };
-
-    const isManagerModeActive = typeof window !== 'undefined' && sessionStorage.getItem('mm_security_unlocked') === 'true';
 
     return (
         <>
@@ -488,19 +382,10 @@ export default function SettingsContent() {
                                         <Input type="password" value={newPin} onChange={(e) => setNewPin(e.target.value)} placeholder="4-8 DÍGITOS" className="h-12 text-xl tracking-[0.5em] text-center" />
                                     </div>
                                 </div>
-                                
-                                <div className="space-y-2">
-                                    <Button className="w-full h-12 uppercase font-bold" onClick={handleUpdatePinSettings} disabled={isUpdatingPin}>
-                                        {isUpdatingPin ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-                                        {profile?.securityPin ? "Guardar Ajustes" : "Establecer PIN"}
-                                    </Button>
-                                    
-                                    {isManagerModeActive && (
-                                        <Button variant="outline" className="w-full border-destructive text-destructive hover:bg-destructive/5 uppercase font-bold" onClick={handleLockManually}>
-                                            <Lock className="w-4 h-4 mr-2" /> Bloquear Ahora
-                                        </Button>
-                                    )}
-                                </div>
+                                <Button className="w-full h-12 uppercase font-bold" onClick={handleUpdatePinSettings} disabled={isUpdatingPin}>
+                                    {isUpdatingPin ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                                    {profile?.securityPin ? "Guardar Ajustes de Seguridad" : "Establecer PIN"}
+                                </Button>
                             </div>
                         </div>
                     </CardContent>
@@ -691,13 +576,13 @@ export default function SettingsContent() {
                             <CardContent className="space-y-6">
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <FormField control={settingsForm.control} name="bcvRate" render={({ field }) => (
-                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Tasa Oficial (BCV)</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="" /></FormControl><FormMessage /></FormItem>
+                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Tasa Oficial (BCV)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
                                     )} />
                                     <FormField control={settingsForm.control} name="parallelRate" render={({ field }) => (
-                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Tasa de Reposición</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="" /></FormControl><FormMessage /></FormItem>
+                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Tasa de Reposición</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
                                     )} />
                                     <FormField control={settingsForm.control} name="profitMargin" render={({ field }) => (
-                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Margen Global (%)</FormLabel><FormControl><Input type="number" {...field} className="" /></FormControl><FormMessage /></FormItem>
+                                        <FormItem><FormLabel className="text-[10px] font-bold uppercase text-muted-foreground">Margen Global (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                                     )} />
                                 </div>
                             </CardContent>
@@ -711,7 +596,14 @@ export default function SettingsContent() {
                     </Form>
                 </Card>
 
-                <div className="flex justify-center pt-4"><Button variant="destructive" onClick={handleSignOut} size="lg" className="uppercase font-bold"><LogOut className="mr-2 h-5 w-5" /> Cerrar Sesión</Button></div>
+                <div className="flex flex-col items-center gap-4 pt-8">
+                    <Button variant="outline" onClick={handleExportSystemBackup} className="uppercase font-bold">
+                        <DownloadCloud className="mr-2 h-4 w-4" /> Generar Respaldo Local (Excel)
+                    </Button>
+                    <Button variant="destructive" onClick={handleSignOut} size="lg" className="uppercase font-bold">
+                        <LogOut className="mr-2 h-5 w-5" /> Cerrar Sesión
+                    </Button>
+                </div>
             </main>
         </>
     );

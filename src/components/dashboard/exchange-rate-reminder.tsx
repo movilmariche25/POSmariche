@@ -1,8 +1,7 @@
-
 "use client";
 
 import { useCurrency } from "@/hooks/use-currency";
-import { AlertCircle, Loader2, TrendingUp, Clock, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Loader2, TrendingUp, Clock, RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
 import { differenceInHours } from "date-fns";
 import { Button } from "../ui/button";
 import { useState, useEffect } from "react";
@@ -64,8 +63,6 @@ export function ExchangeRateReminder() {
                     ? differenceInHours(new Date(), new Date(settings.lastUpdated))
                     : Infinity;
 
-                // CRITICAL FIX: Aggressive diff check to avoid unnecessary writes
-                // Only sync if > 4 hours have passed OR the difference is substantial (> 0.05)
                 const isSignificantDiff = Math.abs(liveRate - settings.bcvRate) > 0.05;
 
                 if (hoursSinceUpdate >= UPDATE_THRESHOLD_HOURS || isSignificantDiff) {
@@ -111,19 +108,32 @@ export function ExchangeRateReminder() {
         <div className="flex flex-col border-b sticky top-0 z-[40] bg-white shadow-sm">
             <div className="bg-primary/5 px-4 py-2 flex flex-wrap items-center justify-between gap-y-2">
                 <div className="flex items-center gap-4 overflow-x-auto no-scrollbar">
-                    <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md border", isOnline ? "bg-green-100 text-green-700 border-green-200" : "bg-red-100 text-red-700 border-red-200")}>
+                    <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 text-primary hover:bg-primary/10 shrink-0 border border-primary/10" 
+                        onClick={() => window.location.reload()}
+                        title="Actualizar aplicación"
+                    >
+                        <RotateCcw className="w-4 h-4" />
+                    </Button>
+
+                    <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md border shrink-0", isOnline ? "bg-green-100 text-green-700 border-green-200" : "bg-red-100 text-red-700 border-red-200")}>
                         {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
                         <span className="text-[10px] font-black uppercase tracking-wider">{isOnline ? "En Línea" : "Sin Internet"}</span>
                     </div>
-                    <div className="flex items-center gap-2 border-l pl-4 border-slate-200">
+
+                    <div className="flex items-center gap-2 border-l pl-4 border-slate-200 shrink-0">
                         <TrendingUp className="w-4 h-4 text-primary" />
                         <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase font-bold leading-none">BCV Sistema</span><span className="font-bold text-sm text-primary">{bcvRate.toFixed(2)} Bs</span></div>
                     </div>
-                    <div className="flex items-center gap-2 border-l pl-4 border-slate-200">
+
+                    <div className="flex items-center gap-2 border-l pl-4 border-slate-200 shrink-0">
                         <TrendingUp className="w-4 h-4 text-amber-600" />
                         <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase font-bold leading-none">Reposición</span><span className="font-bold text-sm text-amber-600">{parallelRate.toFixed(2)} Bs</span></div>
                     </div>
-                    <div className={cn("flex items-center gap-2 px-3 py-1 rounded-md", needsSync ? "bg-amber-100" : "bg-green-50")}>
+
+                    <div className={cn("flex items-center gap-2 px-3 py-1 rounded-md shrink-0", needsSync ? "bg-amber-100" : "bg-green-50")}>
                         {isFetchingApi ? <Loader2 className="w-3 h-3 animate-spin" /> : <div className={cn("w-2 h-2 rounded-full", needsSync ? "bg-amber-500 animate-pulse" : "bg-green-500")} />}
                         <div className="flex flex-col"><span className="text-[10px] text-muted-foreground uppercase font-bold leading-none">BCV API</span><span className="font-bold text-sm">{apiBcvRate ? `${apiBcvRate.toFixed(2)} Bs` : "..."}</span></div>
                         {needsSync && !settings?.autoUpdateBcv && isOnline && (
