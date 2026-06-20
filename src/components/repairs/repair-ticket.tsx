@@ -1,7 +1,7 @@
 import type { RepairJob, UserProfile } from "@/lib/types";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { renderToString } from "react-dom";
+import { renderToString } from "react-dom/server";
 
 type RepairTicketProps = {
     repairJob: RepairJob;

@@ -59,6 +59,23 @@ const formSchema = z.object({
   isMinimized: z.boolean().default(false),
 });
 
+// Función de utilidad para limpiar objetos de valores undefined antes de enviar a Firestore
+function cleanObject(obj: any): any {
+    const cleaned = { ...obj };
+    Object.keys(cleaned).forEach(key => {
+        if (cleaned[key] === undefined) {
+            delete cleaned[key];
+        } else if (Array.isArray(cleaned[key])) {
+            cleaned[key] = cleaned[key].map((item: any) => 
+                (typeof item === 'object' && item !== null) ? cleanObject(item) : item
+            );
+        } else if (typeof cleaned[key] === 'object' && cleaned[key] !== null) {
+            cleaned[key] = cleanObject(cleaned[key]);
+        }
+    });
+    return cleaned;
+}
+
 export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: { repairJob?: RepairJob | null, children?: ReactNode, isOpen?: boolean, onOpenChange?: (v: boolean) => void }) {
   const { firestore, user } = useFirebase();
   const [internalOpen, setInternalOpen] = useState(false);
@@ -289,7 +306,7 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
                 partsConsumed = true;
             }
 
-            const finalData: any = { 
+            const finalData = cleanObject({ 
                 ...values, id: jobId, 
                 estimatedCost: Number(estimatedTotal.toFixed(2)),
                 amountPaid: currentPaid,
@@ -297,7 +314,8 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
                 status: (currentPaid >= (estimatedTotal - 0.01) && values.status === 'Pendiente') ? 'Pagado' : values.status,
                 createdAt: repairJob?.createdAt || new Date().toISOString(),
                 reservedParts: finalReservedParts, consumedParts: finalConsumedParts, partsConsumed, isPromo: effectiveIsPromo, ...completionData
-            };
+            });
+            
             transaction.set(jobRef, finalData, { merge: true });
             return finalData;
         });

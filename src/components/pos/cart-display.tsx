@@ -35,6 +35,24 @@ function generateSaleId() {
     return `S-${format(date, "yyMMdd")}-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
+// Función de utilidad para limpiar objetos de valores undefined antes de enviar a Firestore
+function cleanObject(obj: any): any {
+    if (obj === null || obj === undefined) return obj;
+    const cleaned = { ...obj };
+    Object.keys(cleaned).forEach(key => {
+        if (cleaned[key] === undefined) {
+            delete cleaned[key];
+        } else if (Array.isArray(cleaned[key])) {
+            cleaned[key] = cleaned[key].map((item: any) => 
+                (typeof item === 'object' && item !== null) ? cleanObject(item) : item
+            );
+        } else if (typeof cleaned[key] === 'object' && cleaned[key] !== null) {
+            cleaned[key] = cleanObject(cleaned[key]);
+        }
+    });
+    return cleaned;
+}
+
 export function CartDisplay({ cart, allProducts, onUpdateQuantity, onRemoveItem, onClearCart, repairJobId, onTogglePromo, onToggleGift, onToggleWarranty, onHoldSale }: CartDisplayProps) {
   const { firestore, user } = useFirebase();
   const { toast } = useToast();
@@ -84,7 +102,6 @@ export function CartDisplay({ cart, allProducts, onUpdateQuantity, onRemoveItem,
   const subtotal = cart.reduce((acc, item) => acc + getPrice(item) * item.quantity, 0);
   const total = subtotal - discount;
 
-  // Solo usamos tasa de reposición si hay al menos un artículo en promoción
   const hasPromo = cart.some(i => i.isPromo);
 
   const handleCheckout = async (payments: Payment[], changeGiven: Payment[], totalChangeInUSD: number): Promise<Sale | null> => {
@@ -95,7 +112,6 @@ export function CartDisplay({ cart, allProducts, onUpdateQuantity, onRemoveItem,
       const hasRepairInCart = cartWithPrices.some(i => i.isRepair);
 
       const totalPaidInUSD = payments.reduce((acc, p) => {
-          // CRITICAL: Usamos tasa de reposición (Parallel) SOLO si hay promociones involucradas
           return acc + (p.method === 'Efectivo USD' ? p.amount : convert(p.amount, 'Bs', 'USD', hasPromo));
       }, 0);
       const actualNetPaidInUSD = totalPaidInUSD - totalChangeInUSD;
@@ -191,7 +207,9 @@ export function CartDisplay({ cart, allProducts, onUpdateQuantity, onRemoveItem,
             }
 
             const saleRef = doc(firestore, 'users', user.uid, 'sale_transactions', saleId);
-            transaction.set(saleRef, {
+            
+            // LIMPIAR DATOS ANTES DE ESCRIBIR EN FIRESTORE
+            const saleData = cleanObject({
                 id: saleId,
                 items: cartWithPrices,
                 subtotal, discount, totalAmount: total,
@@ -204,6 +222,8 @@ export function CartDisplay({ cart, allProducts, onUpdateQuantity, onRemoveItem,
                 bcvRateAtTime: bcvRate,
                 parallelRateAtTime: parallelRate
             });
+
+            transaction.set(saleRef, saleData);
         });
 
         toast({ title: totalPaidInUSD < total - 0.01 ? "Abono Registrado Correctamente" : "Venta Completada con Éxito" });

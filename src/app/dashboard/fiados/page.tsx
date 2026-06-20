@@ -1,4 +1,3 @@
-
 "use client";
 
 import { PageHeader } from "@/components/page-header";
@@ -25,6 +24,24 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SecurityGate } from "@/components/security-gate";
+
+// Función de utilidad para limpiar objetos de valores undefined antes de enviar a Firestore
+function cleanObject(obj: any): any {
+    if (obj === null || obj === undefined) return obj;
+    const cleaned = { ...obj };
+    Object.keys(cleaned).forEach(key => {
+        if (cleaned[key] === undefined) {
+            delete cleaned[key];
+        } else if (Array.isArray(cleaned[key])) {
+            cleaned[key] = cleaned[key].map((item: any) => 
+                (typeof item === 'object' && item !== null) ? cleanObject(item) : item
+            );
+        } else if (typeof cleaned[key] === 'object' && cleaned[key] !== null) {
+            cleaned[key] = cleanObject(cleaned[key]);
+        }
+    });
+    return cleaned;
+}
 
 const paymentMethodOptions: { value: PaymentMethod, label: string, icon: any, hasReference: boolean, isBs: boolean }[] = [
     { value: 'Efectivo USD', label: 'Efectivo USD', icon: DollarSign, hasReference: false, isBs: false },
@@ -402,7 +419,7 @@ function AddFiadoDialog({ children, onAdded, isOpen, setIsOpen, existingFiados }
                 const totalCost = selectedItems.reduce((sum, i) => sum + (i.costPrice * i.quantity), 0);
                 const fiadosRef = collection(firestore, 'users', user.uid, 'fiados');
                 const newDoc = doc(fiadosRef);
-                const data: Fiado = {
+                const data = cleanObject({
                     id: newDoc.id,
                     customerID,
                     customerName,
@@ -414,7 +431,7 @@ function AddFiadoDialog({ children, onAdded, isOpen, setIsOpen, existingFiados }
                     status: 'Pendiente',
                     createdAt: new Date().toISOString(),
                     items: selectedItems
-                };
+                });
                 transaction.set(newDoc, data);
             });
 
@@ -459,16 +476,6 @@ function AddFiadoDialog({ children, onAdded, isOpen, setIsOpen, existingFiados }
                             <UserCheck className="w-3.5 h-3.5" />
                             ¿CARGAR DATOS DE {foundCustomer.name.toUpperCase()}?
                         </Button>
-                    )}
-
-                    {hasPendingFiado && (
-                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-md flex items-center gap-2">
-                            <HandCoins className="w-4 h-4 text-amber-600 shrink-0" />
-                            <p className="text-xs text-amber-800 font-bold">
-                                ESTE CLIENTE TIENE UNA CUENTA PENDIENTE. 
-                                <span className="block font-normal">Puedes añadir productos directamente a su cuenta actual desde la lista principal.</span>
-                            </p>
-                        </div>
                     )}
 
                     <div className="space-y-2">
@@ -605,12 +612,12 @@ function AddItemsToFiadoDialog({ fiado }: { fiado: Fiado }) {
                 const newItems = [...(currentFiadoData.items || []), ...selectedItems];
                 const newConcept = currentFiadoData.concept + ", " + selectedItems.map(i => `${i.quantity}x ${i.productName}`).join(", ");
 
-                transaction.update(fiadoRef, {
+                transaction.update(fiadoRef, cleanObject({
                     totalAmount: newTotal,
                     totalCost: newCost,
                     items: newItems,
                     concept: newConcept
-                });
+                }));
             });
 
             toast({ title: "Cuenta actualizada correctamente" });
@@ -698,7 +705,6 @@ function CobrarFiadoDialog({ fiado }: { fiado: Fiado }) {
 
     const totalAbonoInUSD = useMemo(() => {
         return payments.reduce((acc, p) => {
-            // CRITICAL: Usamos tasa de reposición (true) para valuar abonos de deuda
             return acc + (p.method === 'Efectivo USD' ? p.amount : convert(p.amount, 'Bs', 'USD', true));
         }, 0);
     }, [payments, convert]);
@@ -772,7 +778,7 @@ function CobrarFiadoDialog({ fiado }: { fiado: Fiado }) {
                 const newPaid = currentFiado.amountPaid + finalNetAbonoInUSD;
                 const isFullyPaid = newPaid >= (currentFiado.totalAmount - 0.01);
 
-                const saleData: Sale = {
+                const saleData = cleanObject({
                     id: saleId,
                     fiadoId: fiado.id,
                     items: [{ productId: fiado.id!, name: `Abono Fiado: ${currentFiado.customerName}`, quantity: 1, price: finalNetAbonoInUSD }],
@@ -788,7 +794,7 @@ function CobrarFiadoDialog({ fiado }: { fiado: Fiado }) {
                     totalChangeInUSD: isGivingChange ? totalChangeGivenInUSD : 0,
                     bcvRateAtTime: bcvRate,
                     parallelRateAtTime: parallelRate
-                };
+                });
 
                 transaction.set(saleRef, saleData);
                 transaction.update(fiadoRef, {
@@ -852,7 +858,6 @@ function CobrarFiadoDialog({ fiado }: { fiado: Fiado }) {
                                     {payments.map(p => {
                                         const option = paymentMethodOptions.find(o => o.value === p.method)!;
                                         const symbol = option.isBs ? 'Bs' : '$';
-                                        // CRITICAL: Usamos tasa de reposición para que el abono en Bs cubra el costo de reposición del dólar
                                         const remainingInCurrency = option.isBs ? convert(remainingToPayInUSD, 'USD', 'Bs', true) : remainingToPayInUSD;
 
                                         return (
