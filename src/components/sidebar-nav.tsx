@@ -35,6 +35,7 @@ import { useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import type { UserProfile, UserModule } from '@/lib/types';
 import { Button } from './ui/button';
+import { PwaInstallButton } from './pwa-install-button';
 
 type NavItem = {
     href: string;
@@ -132,6 +133,7 @@ export function SidebarNav() {
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter className='mt-auto p-4 space-y-2'>
+        <PwaInstallButton />
         {isManagerMode && (
             <Button 
                 variant="outline" 

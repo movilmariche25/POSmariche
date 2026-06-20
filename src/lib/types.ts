@@ -41,6 +41,7 @@ export type ReservedPart = {
   isPromo?: boolean;
   isWarranty?: boolean;
   isManual?: boolean;
+  manualPrice?: number; // Para precios fijos en repuestos manuales
 }
 
 export type RepairStatus = 'Pendiente' | 'Pagado' | 'Completado' | 'Garantía';
@@ -251,6 +252,8 @@ export type DailyReconciliation = {
 
 export type Currency = 'USD' | 'Bs';
 
+export type RepairInputMode = 'inventory' | 'manual' | 'both';
+
 export type AppSettings = {
     currency: Currency;
     bcvRate: number;
@@ -262,6 +265,7 @@ export type AppSettings = {
     weeklyRent?: number;
     investmentPercentage?: number;
     partnersCount?: number;
+    repairInputMode?: RepairInputMode;
     initialBalances?: {
         'Efectivo USD'?: number;
         'Efectivo Bs'?: number;

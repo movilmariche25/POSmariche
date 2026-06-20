@@ -23,8 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import type { RepairJob, RepairStatus, Product, UserProfile, ReservedPart } from "@/lib/types";
+import type { RepairJob, RepairStatus, Product, UserProfile, ReservedPart, AppSettings } from "@/lib/types";
 import { useState, useEffect, ReactNode, useMemo, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "../ui/textarea";
@@ -33,15 +32,15 @@ import { Label } from "../ui/label";
 import { useFirebase, useCollection, useMemoFirebase, useDoc } from "@/firebase";
 import { doc, runTransaction, query, orderBy, collection, type DocumentSnapshot } from "firebase/firestore";
 import { handlePrintAllTickets } from "./repair-ticket";
-import { CheckCircle2, User, Smartphone, Package, Search, Plus, Trash2, Loader2, Tag, Info, TicketPercent, AlertTriangle, ShieldCheck, History, Minus, Barcode } from "lucide-react";
-import { format, parseISO, addDays } from "date-fns";
-import { es } from "date-fns/locale";
+import { User, Smartphone, Package, Search, Plus, Trash2, Loader2, DollarSign, Calculator, UserCheck, MapPin, Hammer, Minus, TicketPercent } from "lucide-react";
+import { format, addDays } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../ui/command";
 import { cn } from "@/lib/utils";
 import { Badge } from "../ui/badge";
 import { ProductFormDialog } from "../inventory/product-form-dialog";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Switch } from "../ui/switch";
+import { Separator } from "../ui/separator";
 
 const DRAFT_KEY = 'mm_repair_draft';
 
@@ -65,13 +64,13 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
   const [internalOpen, setInternalOpen] = useState(false);
   const [partsPopoverOpen, setPartsPopoverOpen] = useState(false);
   const [replenishProduct, setReplenishProduct] = useState<Product | null>(null);
-  const [manualAddOpen, setManualAddOpen] = useState(false);
+  const [manualQuickAddOpen, setManualQuickAddOpen] = useState(false);
   
   const open = isOpen !== undefined ? isOpen : internalOpen;
   const setOpen = onOpenChange !== undefined ? onOpenChange : setInternalOpen;
 
   const { toast } = useToast();
-  const { getFinalPrice, getDynamicPrice, format: formatCurrency, bcvRate, parallelRate, profitMargin } = useCurrency();
+  const { getFinalPrice, getDynamicPrice, format: formatCurrency, bcvRate, parallelRate } = useCurrency();
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const isInitialized = useRef(false);
@@ -80,20 +79,18 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      customerName: "",
-      customerPhone: "",
-      customerID: "",
-      customerAddress: "",
-      deviceMake: "",
-      deviceModel: "",
-      reportedIssue: "",
-      status: "Pendiente", 
-      reservedParts: [],
-      isPromo: false,
-      notes: "",
-      isMinimized: false,
+      customerName: "", customerPhone: "", customerID: "", customerAddress: "",
+      deviceMake: "", deviceModel: "", reportedIssue: "",
+      status: "Pendiente", reservedParts: [],
+      isPromo: false, notes: "", isMinimized: false,
     },
   });
+
+  const settingsRef = useMemoFirebase(() => 
+    (firestore && user) ? doc(firestore, 'users', user.uid, 'app-settings', 'main') : null,
+    [firestore, user?.uid]
+  );
+  const { data: settings } = useDoc<AppSettings>(settingsRef);
 
   const profileRef = useMemoFirebase(() => 
     (firestore && user) ? doc(firestore, 'users', user.uid) : null,
@@ -101,35 +98,45 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
   );
   const { data: profile } = useDoc<UserProfile>(profileRef);
 
-  const productsCollection = useMemoFirebase(() => 
+  const productsCol = useMemoFirebase(() => 
     (firestore && user) ? collection(firestore, 'users', user.uid, 'products') : null, 
     [firestore, user?.uid]
   );
-  const { data: products } = useCollection<Product>(productsCollection);
+  const { data: products } = useCollection<Product>(productsCol);
 
-  const repairsCollection = useMemoFirebase(() => 
-    (firestore && user) ? query(collection(firestore, "users", user.uid, "repair_jobs"), orderBy('createdAt', 'desc')) : null,
+  const repairsCol = useMemoFirebase(() => 
+    (firestore && user) ? query(collection(firestore, 'users', user.uid, 'repair_jobs'), orderBy('createdAt', 'desc')) : null,
     [firestore, user?.uid]
   );
-  const { data: allRepairs } = useCollection<RepairJob>(repairsCollection);
+  const { data: allRepairJobs } = useCollection<RepairJob>(repairsCol);
 
-  const currentID = form.watch("customerID");
   const reservedParts = form.watch("reservedParts") as (ReservedPart & { isPromo?: boolean, isWarranty?: boolean, isManual?: boolean })[];
+  const watchedID = form.watch("customerID");
+  const watchedName = form.watch("customerName");
+
+  const foundCustomer = useMemo(() => {
+    if (!watchedID || watchedID.length < 5 || !allRepairJobs) return null;
+    return allRepairJobs.find(job => job.customerID?.toUpperCase().trim() === watchedID.toUpperCase().trim());
+  }, [watchedID, allRepairJobs]);
+
+  const handleApplyCustomerData = () => {
+    if (foundCustomer) {
+        form.setValue("customerName", foundCustomer.customerName.toUpperCase());
+        form.setValue("customerPhone", foundCustomer.customerPhone);
+        form.setValue("customerAddress", (foundCustomer.customerAddress || "").toUpperCase());
+        toast({ title: "Datos cargados" });
+    }
+  };
   
-  // DETECCIÓN AUTOMÁTICA DE PROMOCIÓN
   const effectiveIsPromo = useMemo(() => {
     const parts = [...reservedParts, ...(repairJob?.consumedParts || [])];
     return parts.some(p => p.isPromo && !p.isWarranty);
   }, [reservedParts, repairJob?.consumedParts]);
 
-  // Sincronizar el flag isPromo del formulario con la detección automática
   useEffect(() => {
-    if (isInitialized.current) {
-        form.setValue("isPromo", effectiveIsPromo);
-    }
+    if (isInitialized.current) form.setValue("isPromo", effectiveIsPromo);
   }, [effectiveIsPromo, form]);
 
-  // Efecto de Autoguardado para Borrador
   useEffect(() => {
     if (!repairJob && open) {
         const subscription = form.watch((value) => {
@@ -145,146 +152,88 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
     const allRelevantParts = [...(repairJob?.consumedParts || []), ...reservedParts];
     return allRelevantParts.reduce((sum, part) => {
         if (part.isWarranty) return sum;
-
         let price = 0;
         if (part.isManual) {
-            price = getDynamicPrice(part.costPrice);
+            price = part.manualPrice || getDynamicPrice(part.costPrice);
         } else {
             const product = products?.find(p => p.id === part.productId);
             if (product) {
-                price = part.isPromo && product.promoPrice && product.promoPrice > 0 
-                    ? product.promoPrice 
-                    : getFinalPrice(product);
-            } else {
-                price = getDynamicPrice(part.costPrice);
-            }
+                price = part.isPromo && product.promoPrice ? product.promoPrice : getFinalPrice(product);
+            } else price = getDynamicPrice(part.costPrice);
         }
         return sum + (price * part.quantity);
     }, 0);
   }, [reservedParts, repairJob?.consumedParts, products, getFinalPrice, getDynamicPrice]);
 
   const estimatedTotal = partsTotalForClient;
+  const currentPaid = repairJob?.amountPaid || 0;
 
-  const foundCustomer = useMemo(() => {
-    if (!currentID || currentID.length < 5 || !allRepairs) return null;
-    return allRepairs.find(r => r.customerID?.toUpperCase() === currentID.toUpperCase());
-  }, [currentID, allRepairs]);
-
-  const handleApplyCustomerData = () => {
-    if (foundCustomer) {
-        form.setValue("customerName", foundCustomer.customerName.toUpperCase(), { shouldValidate: true });
-        form.setValue("customerPhone", foundCustomer.customerPhone, { shouldValidate: true });
-        form.setValue("customerAddress", (foundCustomer.customerAddress || "").toUpperCase(), { shouldValidate: true });
-        toast({ title: "Datos cargados" });
-    }
-  };
-
-  // Carga inicial de datos
   useEffect(() => {
-    if (!open) {
-        isInitialized.current = false;
-        isClosingViaMinimize.current = false;
-        return;
-    }
-
+    if (!open) { isInitialized.current = false; isClosingViaMinimize.current = false; return; }
     if (open && !isInitialized.current) {
         if (repairJob) {
-            form.reset({ 
-                ...repairJob,
-                customerName: repairJob.customerName.toUpperCase(),
-                customerID: (repairJob.customerID || "").toUpperCase(),
-                customerAddress: (repairJob.customerAddress || "").toUpperCase(),
-                deviceMake: repairJob.deviceMake.toUpperCase(),
-                deviceModel: repairJob.deviceModel.toUpperCase(),
-                reportedIssue: repairJob.reportedIssue.toUpperCase(),
-                notes: (repairJob.notes || "").toUpperCase(),
-                reservedParts: repairJob.reservedParts || [],
-                status: repairJob.status as any,
-                isMinimized: false,
-                isPromo: repairJob.isPromo || false
-            });
+            form.reset({ ...repairJob, status: repairJob.status as any, isMinimized: false });
         } else {
             const savedDraft = localStorage.getItem(DRAFT_KEY);
             if (savedDraft) {
-                try {
-                    const draftData = JSON.parse(savedDraft);
-                    form.reset({ ...draftData, isMinimized: false });
-                } catch (e) {
-                    localStorage.removeItem(DRAFT_KEY);
-                }
+                try { form.reset({ ...JSON.parse(savedDraft), isMinimized: false }); } 
+                catch (e) { localStorage.removeItem(DRAFT_KEY); }
             } else {
-                form.reset({ 
-                    customerName: "", customerPhone: "", customerID: "", customerAddress: "",
-                    deviceMake: "", deviceModel: "", reportedIssue: "",
-                    status: "Pendiente", reservedParts: [],
-                    isPromo: false, notes: "", isMinimized: false,
-                });
+                form.reset({ customerName: "", customerPhone: "", customerID: "", customerAddress: "", deviceMake: "", deviceModel: "", reportedIssue: "", status: "Pendiente", reservedParts: [], isPromo: false, notes: "", isMinimized: false });
             }
         }
         isInitialized.current = true;
     }
   }, [repairJob, open, form]);
 
-  const handleAddPart = (p: Product) => {
-      const originalPart = repairJob?.reservedParts?.find(rp => rp.productId === p.id);
-      const originalQty = originalPart ? originalPart.quantity : 0;
-      const dbAvailable = (p.stockLevel || 0) - (p.reservedStock || 0) - (p.damagedStock || 0);
-      const realAvailableForThisJob = dbAvailable + originalQty;
-
-      const existingInForm = reservedParts.find(item => item.productId === p.id);
-      const qtyInForm = existingInForm ? existingInForm.quantity : 0;
+  const handleAddPartFromInventory = (p: Product) => {
+      const existing = reservedParts.find(item => item.productId === p.id);
+      const qtyInForm = existing ? existing.quantity : 0;
+      const originalInJob = repairJob?.reservedParts?.find(rp => rp.productId === p.id)?.quantity || 0;
+      const available = (p.stockLevel - (p.reservedStock || 0) - (p.damagedStock || 0)) + originalInJob;
       
-      if (realAvailableForThisJob < qtyInForm + 1) {
+      if (available < qtyInForm + 1) {
           setReplenishProduct(p);
           setPartsPopoverOpen(false);
           return;
       }
 
-      if (existingInForm) {
-          form.setValue('reservedParts', reservedParts.map(item => 
-              item.productId === p.id ? { ...item, quantity: item.quantity + 1 } : item
-          ));
+      if (existing) {
+          form.setValue('reservedParts', reservedParts.map(item => item.productId === p.id ? { ...item, quantity: item.quantity + 1 } : item));
       } else {
-          const newPart: ReservedPart = {
-              productId: p.id!,
-              productName: p.name.toUpperCase(),
-              quantity: 1,
-              costPrice: p.costPrice,
-              isPromo: !!(p.promoPrice && p.promoPrice > 0), // Detección automática al añadir
-              isWarranty: false
-          };
-          form.setValue('reservedParts', [...reservedParts, newPart]);
+          form.setValue('reservedParts', [...reservedParts, { productId: p.id!, productName: p.name.toUpperCase(), quantity: 1, costPrice: p.costPrice, isPromo: !!(p.promoPrice && p.promoPrice > 0), isWarranty: false, isManual: false }]);
       }
       setPartsPopoverOpen(false);
+  };
+
+  const handleAddManualPart = (name: string, cost: number, fixedPrice?: number, isPromo: boolean = false) => {
+      const newPart: ReservedPart = {
+          productId: `manual-${Date.now()}`,
+          productName: name.toUpperCase().trim(),
+          quantity: 1,
+          costPrice: cost,
+          isPromo: isPromo,
+          isWarranty: false,
+          isManual: true,
+          manualPrice: fixedPrice
+      };
+      form.setValue('reservedParts', [...reservedParts, newPart]);
+      setManualQuickAddOpen(false);
   };
 
   const handleRemovePart = (productId: string) => {
       form.setValue('reservedParts', reservedParts.filter(p => p.productId !== productId));
   };
 
-  const handleTogglePromo = (productId: string) => {
-      form.setValue('reservedParts', reservedParts.map(p => 
-          p.productId === productId ? { ...p, isPromo: !p.isPromo } : p
-      ));
-  };
-
-  const handleToggleWarranty = (productId: string) => {
-      form.setValue('reservedParts', reservedParts.map(p => 
-          p.productId === productId ? { ...p, isWarranty: !p.isWarranty } : p
-      ));
-  };
-
   const handleMinimize = () => {
       isClosingViaMinimize.current = true;
       isInitialized.current = false;
-      const currentValues = form.getValues();
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...currentValues, isMinimized: true }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...form.getValues(), isMinimized: true }));
       setOpen(false);
   };
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     if (!firestore || !user || isSubmitting) return;
-
     setIsSubmitting(true);
     try {
         const result = await runTransaction(firestore, async (transaction) => {
@@ -299,40 +248,20 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
                 const current = netChanges.get(old.productId) || { delta: 0, name: old.productName };
                 netChanges.set(old.productId, { delta: current.delta - old.quantity, name: old.productName });
             }
-
             for (const updated of newParts) {
                 const current = netChanges.get(updated.productId) || { delta: 0, name: updated.productName };
                 netChanges.set(updated.productId, { delta: current.delta + updated.quantity, name: updated.productName });
             }
 
-            const productIdsToFetch = new Set<string>(netChanges.keys());
-            if (values.status === 'Completado') {
-                values.reservedParts.forEach(p => { if(!p.isManual) productIdsToFetch.add(p.productId) });
-            }
-
-            const productSnapshots = new Map<string, DocumentSnapshot>();
-            for (const pid of Array.from(productIdsToFetch)) {
-                const productRef = doc(firestore, 'users', user.uid, 'products', pid);
-                const snap = await transaction.get(productRef);
-                productSnapshots.set(pid, snap);
-            }
-
-            for (const pid of Array.from(netChanges.keys())) {
-                const change = netChanges.get(pid)!;
+            for (const [pid, change] of Array.from(netChanges.entries())) {
                 if (change.delta === 0) continue;
-
-                const pSnap = productSnapshots.get(pid);
-                if (pSnap && pSnap.exists()) {
+                const pSnap = await transaction.get(doc(firestore, 'users', user.uid, 'products', pid));
+                if (pSnap.exists()) {
                     const data = pSnap.data() as Product;
-                    const currentlyAvailable = (data.stockLevel || 0) - (data.reservedStock || 0) - (data.damagedStock || 0);
-                    
-                    if (change.delta > 0 && currentlyAvailable < change.delta) {
-                        throw new Error(`¡Inventario Bloqueado! No hay stock suficiente para "${change.name}".`);
+                    if (change.delta > 0 && ((data.stockLevel - data.reservedStock - (data.damagedStock || 0)) < change.delta)) {
+                        throw new Error(`Stock insuficiente para "${change.name}".`);
                     }
-                    
-                    transaction.update(pSnap.ref, { 
-                        reservedStock: Math.max(0, (data.reservedStock || 0) + change.delta) 
-                    });
+                    transaction.update(pSnap.ref, { reservedStock: Math.max(0, (data.reservedStock || 0) + change.delta) });
                 }
             }
 
@@ -344,111 +273,59 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
             if (values.status === 'Completado') {
                 for (const part of values.reservedParts) {
                     if (part.isManual) continue;
-                    const pSnap = productSnapshots.get(part.productId);
-                    if (pSnap?.exists()) {
+                    const pSnap = await transaction.get(doc(firestore, 'users', user.uid, 'products', part.productId));
+                    if (pSnap.exists()) {
                         const pData = pSnap.data() as Product;
-                        transaction.update(pSnap.ref, {
+                        transaction.update(pSnap.ref, { 
                             stockLevel: (pData.stockLevel || 0) - part.quantity,
-                            reservedStock: Math.max(0, (data.reservedStock || 0) - part.quantity)
+                            reservedStock: Math.max(0, (pData.reservedStock || 0) - part.quantity)
                         });
                     }
                 }
-                
                 const completionDate = new Date();
-                completionData = {
-                    completedAt: completionDate.toISOString(),
-                    warrantyEndDate: addDays(completionDate, 4).toISOString(),
-                    partsConsumed: true
-                };
-                
+                completionData = { completedAt: completionDate.toISOString(), warrantyEndDate: addDays(completionDate, 4).toISOString(), partsConsumed: true };
                 finalConsumedParts = [...finalConsumedParts, ...values.reservedParts];
                 finalReservedParts = [];
                 partsConsumed = true;
             }
 
-            const newEstimatedCost = Number(estimatedTotal.toFixed(2));
-            const currentAmountPaid = repairJob?.amountPaid || 0;
-            const isFullyPaidNow = currentAmountPaid >= (newEstimatedCost - 0.01);
-
-            const { isMinimized, ...dataToSave } = values;
-
             const finalData: any = { 
-                ...dataToSave,
-                customerName: values.customerName.toUpperCase().trim(),
-                customerID: values.customerID.toUpperCase().trim(),
-                customerAddress: values.customerAddress.toUpperCase().trim(),
-                deviceMake: values.deviceMake.toUpperCase().trim(),
-                deviceModel: values.deviceModel.toUpperCase().trim(),
-                reportedIssue: values.reportedIssue.toUpperCase().trim(),
-                notes: values.notes.toUpperCase().trim(),
-                id: jobId, 
-                estimatedCost: newEstimatedCost,
-                amountPaid: currentAmountPaid,
-                isPaid: isFullyPaidNow,
-                status: (isFullyPaidNow && values.status === 'Pendiente') ? 'Pagado' : values.status,
+                ...values, id: jobId, 
+                estimatedCost: Number(estimatedTotal.toFixed(2)),
+                amountPaid: currentPaid,
+                isPaid: currentPaid >= (estimatedTotal - 0.01),
+                status: (currentPaid >= (estimatedTotal - 0.01) && values.status === 'Pendiente') ? 'Pagado' : values.status,
                 createdAt: repairJob?.createdAt || new Date().toISOString(),
-                reservedParts: finalReservedParts,
-                consumedParts: finalConsumedParts,
-                partsConsumed,
-                isPromo: effectiveIsPromo, // Guardamos la detección automática
-                ...completionData
+                reservedParts: finalReservedParts, consumedParts: finalConsumedParts, partsConsumed, isPromo: effectiveIsPromo, ...completionData
             };
-            
             transaction.set(jobRef, finalData, { merge: true });
             return finalData;
         });
 
         localStorage.removeItem(DRAFT_KEY);
-        toast({ title: "Registro sincronizado con inventario" });
-        if (!repairJob) {
-            handlePrintAllTickets({ 
-                repairJob: result as RepairJob, 
-                businessName: profile?.businessName, 
-                profile, 
-                bcvRate,
-                parallelRate 
-            }, () => {});
-        }
+        toast({ title: "Sincronizado" });
+        if (!repairJob) handlePrintAllTickets({ repairJob: result as RepairJob, businessName: profile?.businessName, profile, bcvRate, parallelRate }, () => {});
         setOpen(false);
     } catch (e: any) {
-        console.error("Submit Error:", e);
-        toast({ variant: "destructive", title: "Error en Transacción", description: e.message });
-    } finally {
-        setIsSubmitting(false);
-    }
+        toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally { setIsSubmitting(false); }
   }
 
-  const currentPaid = Number(repairJob?.amountPaid || 0);
-  const currentPending = Math.max(0, estimatedTotal - currentPaid);
-  const isJobCompleted = repairJob?.status === 'Completado';
-  const showRateInfo = profile?.showRateOnReceipt !== false;
+  const inputMode = settings?.repairInputMode || 'both';
 
   return (
-    <Dialog open={open} onOpenChange={(val) => {
-        if (!val && !repairJob && !isClosingViaMinimize.current) {}
-        setOpen(val);
-    }}>
+    <Dialog open={open} onOpenChange={setOpen}>
       {children && <DialogTrigger asChild>{children}</DialogTrigger>}
-      <DialogContent className="sm:max-w-2xl max-h-[95vh] flex flex-col p-0 overflow-hidden shadow-2xl border-none">
-        <div className="p-4 bg-slate-100 border-b flex justify-between items-center relative">
-            <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-700 uppercase">
-                    {repairJob ? 'GESTIONAR TRABAJO' : 'NUEVA RECEPCIÓN TÉCNICA'}
-                    {(repairJob?.isPaid || currentPending <= 0.01) && <CheckCircle2 className="w-4 h-4 text-green-500" />}
-                </DialogTitle>
-            </DialogHeader>
-            <div className="flex items-center gap-2 pr-8">
-                {repairJob && <Badge variant="outline" className="font-mono text-[10px] bg-white">{repairJob.id}</Badge>}
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+        <div className="p-6 pb-2">
+            <div className="flex justify-between items-center mb-4">
+                <DialogHeader className="flex-1">
+                    <DialogTitle className="uppercase font-bold">{repairJob ? 'Gestionar Trabajo' : 'Nueva Recepción Técnica'}</DialogTitle>
+                    <DialogDescription>Completa los datos del cliente y el equipo para generar el ticket.</DialogDescription>
+                </DialogHeader>
                 {!repairJob && (
-                    <Button 
-                        type="button" 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-8 w-8 hover:bg-slate-200" 
-                        onClick={handleMinimize}
-                        title="Minimizar y seguir luego"
-                    >
-                        <Minus className="w-4 h-4" />
+                    <Button type="button" variant="ghost" size="icon" onClick={handleMinimize} title="Minimizar registro">
+                        <Minus className="h-4 w-4" />
                     </Button>
                 )}
             </div>
@@ -456,312 +333,237 @@ export function RepairFormDialog({ repairJob, children, isOpen, onOpenChange }: 
         
         <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col flex-1 overflow-hidden">
-                <div className="flex-1 overflow-y-auto px-6 space-y-6 py-6 bg-white">
-                    <div className="space-y-4 p-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm">
-                        <div className="flex justify-between items-center border-b border-slate-200 pb-2 mb-2">
-                            <h3 className="text-[10px] font-bold uppercase text-slate-500 tracking-widest flex items-center gap-2">
-                                <User className="w-3.5 h-3.5"/> 1. Información del Cliente
-                            </h3>
-                            {foundCustomer && !repairJob && (
-                                <Button type="button" variant="ghost" className="h-6 text-[9px] text-blue-600 font-bold bg-blue-100/50 hover:bg-blue-100 uppercase" onClick={handleApplyCustomerData}>
-                                    <CheckCircle2 className="w-3 h-3 mr-1" /> REUSAR DATOS
-                                </Button>
-                            )}
-                        </div>
+                <div className="flex-1 overflow-y-auto px-6 space-y-6">
+                    <div className="space-y-4">
+                        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest flex items-center gap-2 border-b pb-1">
+                            <User className="w-3 h-3" /> Información del Cliente
+                        </span>
+                        
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormField control={form.control} name="customerID" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Cédula / RIF</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs bg-white uppercase font-normal" placeholder="V-00000000" /></FormControl></FormItem>} />
-                            <FormField control={form.control} name="customerPhone" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Teléfono de Contacto</FormLabel><FormControl><Input {...field} className="h-9 text-xs bg-white font-normal" placeholder="0412-0000000" /></FormControl></FormItem>} />
+                            <FormField control={form.control} name="customerID" render={({field}) => (
+                                <FormItem>
+                                    <FormLabel className="text-[10px] font-bold uppercase">Cédula / RIF</FormLabel>
+                                    <FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} placeholder="V-12345678" className="uppercase" /></FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />
+                            <FormField control={form.control} name="customerPhone" render={({field}) => (
+                                <FormItem>
+                                    <FormLabel className="text-[10px] font-bold uppercase">Teléfono</FormLabel>
+                                    <FormControl><Input {...field} placeholder="0412-0000000" /></FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />
                         </div>
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <FormField control={form.control} name="customerName" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Nombre y Apellido</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs uppercase bg-white font-normal" placeholder="NOMBRE DEL CLIENTE" /></FormControl></FormItem>} />
-                            <FormField control={form.control} name="customerAddress" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Dirección de Habitación</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs uppercase bg-white font-normal" placeholder="ZONA / CALLE / CASA" /></FormControl></FormItem>} />
-                        </div>
+
+                        {foundCustomer && (watchedName.toUpperCase() !== foundCustomer.customerName.toUpperCase()) && (
+                            <Button 
+                                type="button" 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-7 text-[10px] text-blue-600 bg-blue-50 hover:bg-blue-100 flex items-center gap-1 font-bold w-full"
+                                onClick={handleApplyCustomerData}
+                            >
+                                <UserCheck className="w-3.5 h-3.5" />
+                                ¿CARGAR DATOS DE {foundCustomer.customerName.toUpperCase()}?
+                            </Button>
+                        )}
+
+                        <FormField control={form.control} name="customerName" render={({field}) => (
+                            <FormItem>
+                                <FormLabel className="text-[10px] font-bold uppercase">Nombre Completo</FormLabel>
+                                <FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} placeholder="JUAN PÉREZ" className="uppercase" /></FormControl>
+                                <FormMessage />
+                            </FormItem>
+                        )} />
+
+                        <FormField control={form.control} name="customerAddress" render={({field}) => (
+                            <FormItem>
+                                <FormLabel className="text-[10px] font-bold uppercase flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Dirección</FormLabel>
+                                <FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} placeholder="EJ: CALLE 5, CASA 10..." className="uppercase" /></FormControl>
+                            </FormItem>
+                        )} />
                     </div>
 
-                    <div className="space-y-4 p-4 rounded-xl border border-slate-200 bg-slate-50/50 shadow-sm">
-                        <div className="border-b border-slate-200 pb-2 mb-2">
-                            <h3 className="text-[10px] font-bold uppercase text-slate-500 tracking-widest flex items-center gap-2">
-                                <Smartphone className="w-3.5 h-3.5"/> 2. Detalles del Equipo
-                            </h3>
+                    <div className="space-y-4">
+                        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest flex items-center gap-2 border-b pb-1">
+                            <Smartphone className="w-3 h-3" /> Detalles del Equipo
+                        </span>
+                        <div className="grid grid-cols-2 gap-4">
+                            <FormField control={form.control} name="deviceMake" render={({field}) => <FormItem><FormLabel className="text-[10px] font-bold uppercase">Marca</FormLabel><FormControl><Input {...field} className="uppercase" placeholder="SAMSUNG, IPHONE..." /></FormControl></FormItem>} />
+                            <FormField control={form.control} name="deviceModel" render={({field}) => <FormItem><FormLabel className="text-[10px] font-bold uppercase">Modelo</FormLabel><FormControl><Input {...field} className="uppercase" placeholder="A51, 13 PRO..." /></FormControl></FormItem>} />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormField control={form.control} name="deviceMake" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Marca</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs uppercase bg-white font-normal" placeholder="EJ: SAMSUNG, XIAOMI" /></FormControl></FormItem>} />
-                            <FormField control={form.control} name="deviceModel" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Modelo exacto</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs uppercase bg-white font-normal" placeholder="EJ: A51, REDMI NOTE 12" /></FormControl></FormItem>} />
-                        </div>
-                        <FormField control={form.control} name="reportedIssue" render={({field}) => <FormItem className="space-y-1"><FormLabel className="text-[10px] text-muted-foreground uppercase font-bold">Falla Reportada</FormLabel><FormControl><Input {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="h-9 text-xs uppercase bg-white font-normal" placeholder="DESCRIPCIÓN DE LA FALLA" /></FormControl></FormItem>} />
+                        <FormField control={form.control} name="reportedIssue" render={({field}) => <FormItem><FormLabel className="text-[10px] font-bold uppercase">Falla / Problema</FormLabel><FormControl><Input {...field} className="uppercase" placeholder="PANTALLA PARTIDA, NO PRENDE..." /></FormControl></FormItem>} />
                     </div>
 
-                    <div className="space-y-4 p-4 rounded-xl border border-blue-100 bg-blue-50/30">
-                        <div className="flex items-center justify-between border-b border-blue-200 pb-2 mb-2">
-                            <h3 className="text-[10px] font-bold uppercase text-blue-600 tracking-widest flex items-center gap-2">
-                                <Package className="w-3.5 h-3.5" /> 3. Repuestos y Servicios
-                            </h3>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between border-b pb-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                                <Package className="w-3 h-3" /> Materiales y Repuestos
+                            </span>
                             <div className="flex gap-2">
-                                <Button 
-                                    type="button" 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="h-7 text-[9px] font-bold border-slate-200 bg-white uppercase" 
-                                    onClick={() => setManualAddOpen(true)}
-                                    disabled={isJobCompleted}
-                                >
-                                    <Plus className="w-3 h-3 mr-1" /> MANUAL (+)
-                                </Button>
-
-                                <Popover open={partsPopoverOpen} onOpenChange={setPartsPopoverOpen}>
-                                    <PopoverTrigger asChild>
-                                        <Button type="button" variant="outline" size="sm" className="h-7 text-[9px] font-bold border-slate-200 bg-white uppercase" disabled={isJobCompleted}>
-                                            <Search className="w-3 h-3 mr-1" /> INVENTARIO
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="p-0 w-[350px]" align="end">
-                                        <Command>
-                                            <CommandInput placeholder="BUSCAR REPUESTO..." className="h-9 text-xs uppercase font-normal"/>
-                                            <CommandList>
-                                                <CommandEmpty className="text-xs py-4 text-center">NO SE ENCONTRARON ARTÍCULOS.</CommandEmpty>
-                                                <CommandGroup>
-                                                    {(products || []).filter(p => !p.isCombo).map(p => {
-                                                        const inForm = reservedParts.find(rp => rp.productId === p.id);
-                                                        const qtyInForm = inForm ? inForm.quantity : 0;
-                                                        const originalInJob = repairJob?.reservedParts?.find(rp => rp.productId === p.id)?.quantity || 0;
-                                                        const currentlyReservedGlobally = p.reservedStock || 0;
-                                                        const available = (p.stockLevel - currentlyReservedGlobally - (p.damagedStock || 0)) + originalInJob;
-                                                        
-                                                        return (
-                                                            <CommandItem key={p.id} onSelect={() => handleAddPart(p)} className="flex justify-between items-center p-2 text-xs cursor-pointer">
-                                                                <span className="font-bold uppercase">{p.name}</span>
-                                                                <Badge variant={available > qtyInForm ? "secondary" : "destructive"} className="text-[8px] h-4">
-                                                                    {available > qtyInForm ? `${available - qtyInForm} LIBRES` : 'SIN STOCK'}
-                                                                </Badge>
-                                                            </CommandItem>
-                                                        );
-                                                    })}
-                                                </CommandGroup>
-                                            </CommandList>
-                                        </Command>
-                                    </PopoverContent>
-                                </Popover>
+                                {(inputMode === 'manual' || inputMode === 'both') && (
+                                    <Button type="button" variant="outline" size="sm" className="h-7 text-[9px] font-black" onClick={() => setManualQuickAddOpen(true)}>
+                                        MANUAL (+)
+                                    </Button>
+                                )}
+                                {(inputMode === 'inventory' || inputMode === 'both') && (
+                                    <Popover open={partsPopoverOpen} onOpenChange={setPartsPopoverOpen}>
+                                        <PopoverTrigger asChild>
+                                            <Button type="button" variant="outline" size="sm" className="h-7 text-[9px] font-black">
+                                                <Search className="w-3 h-3 mr-1" /> INVENTARIO
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="p-0 w-[350px]" align="end">
+                                            <Command><CommandInput placeholder="BUSCAR REPUESTO..." className="h-9"/><CommandList><CommandEmpty>Sin resultados.</CommandEmpty><CommandGroup>
+                                                {(products || []).filter(p => !p.isCombo).map(p => (
+                                                    <CommandItem key={p.id} onSelect={() => handleAddPartFromInventory(p)} className="flex justify-between items-center text-xs">
+                                                        <span className="font-bold uppercase">{p.name}</span>
+                                                        <Badge variant="secondary" className="text-[9px]">{p.stockLevel - (p.reservedStock || 0)} DISP.</Badge>
+                                                    </CommandItem>
+                                                ))}</CommandGroup></CommandList></Command>
+                                        </PopoverContent>
+                                    </Popover>
+                                )}
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            {reservedParts.length === 0 ? (
-                                <p className="text-[10px] text-center text-slate-400 py-4 italic uppercase">No hay piezas nuevas en reserva.</p>
-                            ) : (
-                                reservedParts.map((part) => {
-                                    const pData = products?.find(prod => prod.id === part.productId);
-                                    const hasPromo = !!(pData?.promoPrice && pData.promoPrice > 0);
-                                    let price = part.isPromo && pData?.promoPrice ? pData.promoPrice : getFinalPrice(pData || { costPrice: part.costPrice } as Product);
-                                    
-                                    if (part.isWarranty) price = 0;
+                            {reservedParts.map((part) => {
+                                const pData = products?.find(p => p.id === part.productId);
+                                let price = part.isManual && part.manualPrice ? part.manualPrice : (part.isPromo && pData?.promoPrice ? pData.promoPrice : getFinalPrice(pData || { costPrice: part.costPrice } as Product));
+                                if (part.isWarranty) price = 0;
 
-                                    return (
-                                        <div key={part.productId} className={cn(
-                                            "flex items-center justify-between p-2.5 rounded-lg border shadow-sm text-xs transition-all",
-                                            part.isWarranty ? "bg-orange-50 border-orange-200" : (part.isPromo ? "bg-blue-50 border-blue-200" : "bg-white border-slate-200")
-                                        )}>
-                                            <div className="flex flex-col">
-                                                <span className={cn("font-bold uppercase text-slate-700", part.isWarranty && "text-orange-700")}>
-                                                    {part.productName}
-                                                </span>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-tighter">
-                                                        Reservado: {part.quantity} x ${price.toFixed(2)}
-                                                    </span>
-                                                    {part.isPromo && !part.isWarranty && <Badge className="h-3 text-[7px] bg-blue-600 font-bold uppercase">Oferta</Badge>}
-                                                    {part.isWarranty && <Badge className="h-3 text-[7px] bg-orange-600 font-bold uppercase">Garantía</Badge>}
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-1.5">
-                                                <TooltipProvider>
-                                                    {hasPromo && (
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button 
-                                                                    type="button" 
-                                                                    variant="ghost" 
-                                                                    size="icon" 
-                                                                    className={cn("h-7 w-7", part.isPromo ? "text-blue-600 bg-blue-100" : "text-slate-400")} 
-                                                                    onClick={() => handleTogglePromo(part.productId)}
-                                                                    disabled={isJobCompleted || part.isWarranty}
-                                                                >
-                                                                    <TicketPercent className="w-3.5 h-3.5" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent className="text-[10px] font-bold uppercase">Precio de Oferta</TooltipContent>
-                                                        </Tooltip>
-                                                    )}
-
-                                                    <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                            <Button 
-                                                                type="button" 
-                                                                variant="ghost" 
-                                                                size="icon" 
-                                                                className={cn("h-7 w-7", part.isWarranty ? "text-orange-600 bg-orange-100" : "text-slate-400")} 
-                                                                onClick={() => handleToggleWarranty(part.productId)}
-                                                                disabled={isJobCompleted}
-                                                            >
-                                                                <ShieldCheck className="w-3.5 h-3.5" />
-                                                            </Button>
-                                                        </TooltipTrigger>
-                                                        <TooltipContent className="text-[10px] font-bold uppercase">Garantía ($0)</TooltipContent>
-                                                    </Tooltip>
-
-                                                    {!isJobCompleted && (
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button 
-                                                                    type="button" 
-                                                                    variant="ghost" 
-                                                                    size="icon" 
-                                                                    className="h-7 w-7 text-destructive hover:bg-destructive/5" 
-                                                                    onClick={() => handleRemovePart(part.productId)}
-                                                                >
-                                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent className="text-[10px] font-bold uppercase">Quitar</TooltipContent>
-                                                        </Tooltip>
-                                                    )}
-                                                </TooltipProvider>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                    </div>
-
-                    {repairJob?.consumedParts && repairJob.consumedParts.length > 0 && (
-                        <div className="space-y-4 p-4 rounded-xl border border-slate-200 bg-slate-50/30">
-                            <div className="border-b border-slate-200 pb-2 mb-2">
-                                <h3 className="text-[10px] font-bold uppercase text-slate-500 tracking-widest flex items-center gap-2">
-                                    <History className="w-3.5 h-3.5" /> Historial de Repuestos Consumidos
-                                </h3>
-                            </div>
-                            <div className="space-y-2 opacity-70">
-                                {repairJob.consumedParts.map((part, idx) => (
-                                    <div key={idx} className="flex justify-between items-center p-2 rounded-lg border bg-white text-[10px]">
+                                return (
+                                    <div key={part.productId} className="flex justify-between items-center p-2 rounded-md border bg-slate-50">
                                         <div className="flex flex-col">
-                                            <span className="font-bold uppercase">{part.productName}</span>
-                                            <span className="text-muted-foreground uppercase font-bold">Consumido el {repairJob.completedAt ? format(parseISO(repairJob.completedAt), "dd/MM/yy") : '---'}</span>
+                                            <span className="font-bold text-xs uppercase">{part.productName}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] text-muted-foreground">1x ${price.toFixed(2)}</span>
+                                                {part.isManual && <Badge variant="outline" className="text-[8px] h-3 px-1 border-amber-200 text-amber-600 font-bold">MANUAL</Badge>}
+                                                {part.isPromo && <Badge className="text-[8px] h-3 px-1 bg-blue-600 font-bold">OFERTA</Badge>}
+                                            </div>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="font-black">${part.isWarranty ? '0.00' : part.costPrice.toFixed(2)}</p>
-                                            {part.isWarranty && <Badge variant="outline" className="h-3 text-[7px] border-orange-200 text-orange-600 font-bold uppercase">Garantía</Badge>}
-                                        </div>
+                                        <Button type="button" variant="ghost" size="icon" className="h-7 v-7 text-destructive" onClick={() => handleRemovePart(part.productId)}>
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </Button>
                                     </div>
-                                ))}
-                            </div>
+                                );
+                            })}
                         </div>
-                    )}
-
-                    <div className="pt-2">
-                        <div className="p-5 rounded-xl bg-slate-900 text-white space-y-2 shadow-xl border-t-4 border-primary">
-                            <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                                <span>Costo Total Acumulado:</span>
-                                <span>${estimatedTotal.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between items-center text-[10px] text-green-400 font-bold uppercase tracking-wider">
-                                <span>Abono Recibido:</span>
-                                <span>-${currentPaid.toFixed(2)}</span>
-                            </div>
-                            <div className="border-t border-white/10 pt-3 mt-1 flex justify-between items-end">
-                                <div className="flex flex-col">
-                                    <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Saldo Pendiente</span>
-                                    <span className="text-[9px] text-slate-500 font-bold uppercase">
-                                        Eq: Bs {formatCurrency(currentPending * (effectiveIsPromo ? parallelRate : bcvRate))}
-                                    </span>
-                                </div>
-                                <span className="text-3xl font-black text-primary leading-none tabular-nums">${currentPending.toFixed(2)}</span>
-                            </div>
-                        </div>
-                        
-                        {/* PANEL INFORMATIVO DE PROMOCIÓN DETECTADA */}
-                        {effectiveIsPromo && showRateInfo && (
-                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex flex-col animate-in slide-in-from-top-2">
-                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-blue-700">
-                                    <TicketPercent className="w-3.5 h-3.5" /> 
-                                    Tasa de Reposición Activa
-                                </div>
-                                <p className="text-[8px] text-blue-600/70 font-bold uppercase ml-5">
-                                    Se ha detectado el uso de repuestos en oferta. El saldo en Bolívares se protege usando el dólar de reposición.
-                                </p>
-                            </div>
-                        )}
                     </div>
 
-                    <FormField control={form.control} name="notes" render={({field}) => (
-                        <FormItem className="space-y-1">
-                            <FormLabel className="text-[10px] font-bold uppercase text-slate-400">Observaciones / Notas</FormLabel>
-                            <FormControl>
-                                <Textarea placeholder="EJ: RAYONES EN TAPA TRASERA, SIN BANDEJA SIM..." {...field} onChange={(e) => field.onChange(e.target.value.toUpperCase())} className="resize-none text-xs h-16 uppercase bg-white font-normal" />
-                            </FormControl>
-                        </FormItem>
-                    )} />
+                    <div className="p-4 rounded-xl bg-slate-900 text-white space-y-2 shadow-lg border-t-4 border-primary">
+                        <div className="flex justify-between text-[10px] text-slate-400 font-bold uppercase">
+                            <span>Saldo Pendiente:</span>
+                            <span>Eq: Bs {formatCurrency((estimatedTotal - currentPaid) * (effectiveIsPromo ? parallelRate : bcvRate))}</span>
+                        </div>
+                        <div className="flex justify-between items-end">
+                            <span className="text-[10px] font-bold text-primary uppercase flex items-center gap-1"><DollarSign className="w-3 h-3" /> Monto Final</span>
+                            <span className="text-3xl font-black text-white">${(estimatedTotal - currentPaid).toFixed(2)}</span>
+                        </div>
+                    </div>
+                    <div className="pb-6"></div>
                 </div>
 
-                <div className="p-4 border-t bg-slate-100 flex gap-3">
-                    <DialogFooter className="w-full sm:flex-row flex-col gap-2">
-                        <Button type="submit" disabled={isSubmitting} className="flex-1 h-11 text-xs font-bold uppercase tracking-widest shadow-lg">
-                            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : (repairJob ? "GUARDAR CAMBIOS" : "REGISTRAR E IMPRIMIR")}
-                        </Button>
-                    </DialogFooter>
-                </div>
+                <DialogFooter className="p-6 border-t bg-white">
+                    <Button type="submit" disabled={isSubmitting} className="w-full h-12 text-base font-bold shadow-lg uppercase">
+                        {isSubmitting ? <Loader2 className="animate-spin h-5 w-5" /> : (repairJob ? "GUARDAR CAMBIOS" : "REGISTRAR Y GENERAR TICKET")}
+                    </Button>
+                </DialogFooter>
             </form>
         </Form>
 
-        <ProductFormDialog 
-            isOpen={manualAddOpen}
-            onOpenChange={setManualAddOpen}
-            productCount={products?.length || 0}
-            onSaved={(newProd) => {
-                const existingInForm = reservedParts.find(item => item.productId === newProd.id);
-                if (existingInForm) {
-                    form.setValue('reservedParts', reservedParts.map(item => 
-                        item.productId === newProd.id ? { ...item, quantity: item.quantity + 1 } : item
-                    ));
-                } else {
-                    const newPart: ReservedPart = {
-                        productId: newProd.id!,
-                        productName: newProd.name.toUpperCase(),
-                        quantity: 1,
-                        costPrice: newProd.costPrice,
-                        isPromo: !!(newProd.promoPrice && newProd.promoPrice > 0),
-                        isWarranty: false
-                    };
-                    form.setValue('reservedParts', [...reservedParts, newPart]);
-                }
-            }}
-        />
-
-        {replenishProduct && (
-            <ProductFormDialog 
-                product={replenishProduct}
-                isOpen={!!replenishProduct}
-                onOpenChange={(open) => !open && setReplenishProduct(null)}
-                onSaved={(updatedProd) => {
-                    const existingInForm = reservedParts.find(item => item.productId === updatedProd.id);
-                    if (existingInForm) {
-                        form.setValue('reservedParts', reservedParts.map(item => 
-                            item.productId === updatedProd.id ? { ...item, quantity: item.quantity + 1 } : item
-                        ));
-                    } else {
-                        const newPart: ReservedPart = {
-                            productId: updatedProd.id!,
-                            productName: updatedProd.name.toUpperCase(),
-                            quantity: 1,
-                            costPrice: updatedProd.costPrice,
-                            isPromo: !!(updatedProd.promoPrice && updatedProd.promoPrice > 0),
-                            isWarranty: false
-                        };
-                        form.setValue('reservedParts', [...reservedParts, newPart]);
-                    }
-                }}
-            />
-        )}
+        <ManualQuickAddDialog isOpen={manualQuickAddOpen} onOpenChange={setManualQuickAddOpen} onAdd={handleAddManualPart} />
+        {replenishProduct && <ProductFormDialog product={replenishProduct} isOpen={!!replenishProduct} onOpenChange={(v) => !v && setReplenishProduct(null)} onSaved={handleAddPartFromInventory} />}
       </DialogContent>
     </Dialog>
   );
+}
+
+function ManualQuickAddDialog({ isOpen, onOpenChange, onAdd }: { isOpen: boolean, onOpenChange: (v: boolean) => void, onAdd: (name: string, cost: number, fixed?: number, isPromo?: boolean) => void }) {
+    const [name, setName] = useState("");
+    const [cost, setCost] = useState("");
+    const [isFixed, setIsFixed] = useState(false);
+    const [fixedPrice, setFixedPrice] = useState("");
+    const [isPromo, setIsPromo] = useState(false);
+    const { getDynamicPrice, profitMargin, bcvRate, format: formatCurrency } = useCurrency();
+
+    const suggestedBCV = useMemo(() => cost ? getDynamicPrice(Number(cost)) : 0, [cost, getDynamicPrice]);
+    const suggestedOffer = useMemo(() => cost ? Number(cost) * (1 + profitMargin / 100) : 0, [cost, profitMargin]);
+
+    const handleConfirm = () => {
+        const finalPrice = (isFixed || isPromo) ? (Number(fixedPrice) || (isPromo ? suggestedOffer : suggestedBCV)) : undefined;
+        onAdd(name, Number(cost), finalPrice, isPromo);
+        setName(""); setCost(""); setFixedPrice(""); setIsFixed(false); setIsPromo(false);
+        onOpenChange(false);
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader><DialogTitle className="uppercase font-bold">Repuesto Manual</DialogTitle></DialogHeader>
+                <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                        <Label className="text-[10px] font-bold uppercase">Descripción</Label>
+                        <Input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} placeholder="EJ: PANTALLA A51" className="uppercase" />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="space-y-1">
+                            <Label className="text-[10px] font-bold uppercase">Costo ($)</Label>
+                            <Input type="number" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0.00" />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-[10px] font-bold uppercase text-blue-600">Sugerido BCV</Label>
+                            <div className="h-10 flex flex-col justify-center px-3 bg-blue-50 border border-blue-100 rounded text-blue-700">
+                                <div className="text-xs font-black">${suggestedBCV.toFixed(2)}</div>
+                                <div className="text-[8px] font-bold leading-none">Bs {formatCurrency(suggestedBCV * bcvRate)}</div>
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-[10px] font-bold uppercase text-green-600">Sugerido Oferta</Label>
+                            <div className="h-10 flex items-center px-3 bg-green-50 border border-green-100 rounded text-xs font-black text-green-700">${suggestedOffer.toFixed(2)}</div>
+                        </div>
+                    </div>
+
+                    <div className="space-y-3 p-3 bg-muted/50 rounded-lg border border-dashed">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs font-bold uppercase">Precio Fijo</Label>
+                            <Switch checked={isFixed} onCheckedChange={setIsFixed} />
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div className="flex flex-col">
+                                <Label className="text-xs font-bold uppercase text-blue-600">Oferta (Reposición)</Label>
+                                <p className="text-[8px] text-muted-foreground">Usa Tasa Paralela para Bs.</p>
+                            </div>
+                            <Switch checked={isPromo} onCheckedChange={setIsPromo} />
+                        </div>
+                        
+                        {(isFixed || isPromo) && (
+                            <div className="space-y-2 animate-in slide-in-from-top-2">
+                                <Label className="text-[10px] font-bold uppercase text-primary">
+                                    {isFixed && isPromo ? 'Venta Final en Oferta ($)' : isFixed ? 'Venta Final Fija ($)' : 'Venta Calculada Oferta ($)'}
+                                </Label>
+                                <Input 
+                                    type="number" 
+                                    step="0.01" 
+                                    value={fixedPrice} 
+                                    onChange={(e) => setFixedPrice(e.target.value)} 
+                                    placeholder={isPromo ? suggestedOffer.toFixed(2) : suggestedBCV.toFixed(2)} 
+                                    className="font-bold text-lg" 
+                                    autoFocus 
+                                />
+                                {isFixed && isPromo && (
+                                    <p className="text-[9px] text-blue-600 font-bold italic">
+                                        * Este precio manual se cobrará a tasa de reposición.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <DialogFooter><Button onClick={handleConfirm} disabled={!name || !cost} className="w-full uppercase font-bold">Añadir al trabajo</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
 }
